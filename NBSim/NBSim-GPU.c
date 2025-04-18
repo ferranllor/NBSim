@@ -34,11 +34,11 @@ real3 bodyBodyInteraction(real4 iPos, real4 jPos)
 
 
 void integrate(real4array out, real4array in,
-    real3array vel, real3array force,
+    real3array vel,
     real    dt, int n)
 {
     int i, j;
-    #pragma acc data present(in.x, in.y, in.z, in.w, out.x, out.y, out.z, out.w, force.x, force.y, force.z, vel.x, vel.y, vel.z)
+    #pragma acc data present(in.x, in.y, in.z, in.w, out.x, out.y, out.z, out.w, vel.x, vel.y, vel.z)
     {
         #pragma acc parallel loop
         for (i = 0; i < n; i++)
@@ -46,11 +46,13 @@ void integrate(real4array out, real4array in,
             real fx = 0, fy = 0, fz = 0;
 
             #pragma acc loop reduction(+:fx,fy,fz)
-            for (j = 0; j < i; j++)
+            for (j = 0; j < n; j++)
             {
                 real rx, ry, rz, distSqr, si;
 
-                rx = in.x[j] - in.x[i];  ry = in.y[j] - in.y[i];  rz = in.z[j] - in.z[i];
+                rx = in.x[j] - in.x[i];  
+                ry = in.y[j] - in.y[i];  
+                rz = in.z[j] - in.z[i];
 
                 distSqr = rx * rx + ry * ry + rz * rz;
 
@@ -62,30 +64,6 @@ void integrate(real4array out, real4array in,
                 fx += rx * si;  fy += ry * si; fz += rz * si;
             }
 
-            #pragma acc loop reduction(+:fx,fy,fz)
-            for (j = i + 1; j < n; j++)
-            {
-                real rx, ry, rz, distSqr, si;
-
-                rx = in.x[j] - in.x[i];  ry = in.y[j] - in.y[i];  rz = in.z[j] - in.z[i];
-
-                distSqr = rx * rx + ry * ry + rz * rz;
-
-                if (distSqr < SOFTENING_SQUARED)
-                    si = in.w[j] / powf(SOFTENING_SQUARED, 1.5f);
-                else
-                    si = in.w[j] / powf(distSqr, 1.5f);
-
-                fx += rx * si;  fy += ry * si; fz += rz * si;
-            }
-
-            force.x[i] = fx;  force.y[i] = fy;  force.z[i] = fz;
-        }
-
-        #pragma acc parallel loop
-        for (i = 0; i < n; i++)
-        {
-            real fx = force.x[i], fy = force.y[i], fz = force.z[i];
             real px = in.x[i], py = in.y[i], pz = in.z[i], invMass = in.w[i];
             real vx = vel.x[i], vy = vel.y[i], vz = vel.z[i];
 
@@ -237,19 +215,14 @@ int main(int argc, char** argv)
     v.y = (real*)malloc(n * sizeof(real));
     v.z = (real*)malloc(n * sizeof(real));
 
-    real3array f;
-    f.x = (real*)malloc(n * sizeof(real));
-    f.y = (real*)malloc(n * sizeof(real));
-    f.z = (real*)malloc(n * sizeof(real));
-
     randomizeBodies(pin, v, 1.54f, 8.0f, n);
 
     printf("n=%d bodies for %d iterations:\n", n, iterations);
 
-    #pragma acc data copy(pin.x[0:n], pin.y[0:n], pin.z[0:n], pin.w[0:n], pout.x[0:n], pout.y[0:n], pout.z[0:n], pout.w[0:n], f.x[0:n] ,f.y[0:n], f.z[0:n], v.x[0:n], v.y[0:n], v.z[0:n])
+    #pragma acc data copy(pin.x[0:n], pin.y[0:n], pin.z[0:n], pin.w[0:n], pout.x[0:n], pout.y[0:n], pout.z[0:n], pout.w[0:n], v.x[0:n], v.y[0:n], v.z[0:n])
     for (i = 0; i < iterations; i++)
     {
-        integrate(pout, pin, v, f, dt, n);
+        integrate(pout, pin, v, dt, n);
 
         real4array tmp = pin;
         pin = pout;
@@ -260,9 +233,9 @@ int main(int argc, char** argv)
     printf("Average position: (%f,%f,%f)\n", p_av.x, p_av.y, p_av.z);
     printf("Body-0  position: (%f,%f,%f)\n", pin.x[0], pin.y[0], pin.z[0]);
 
-    free(pin.x);  free(pout.x);  free(v.x);  free(f.x);
-    free(pin.y);  free(pout.y);  free(v.y);  free(f.y);
-    free(pin.z);  free(pout.z);  free(v.z);  free(f.z);
+    free(pin.x);  free(pout.x);  free(v.x); 
+    free(pin.y);  free(pout.y);  free(v.y); 
+    free(pin.z);  free(pout.z);  free(v.z); 
     free(pin.w);  free(pout.w);
 
     return 0;

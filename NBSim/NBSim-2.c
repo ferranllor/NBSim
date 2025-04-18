@@ -1,11 +1,11 @@
-// Split loops version
+// No converts version
 // gcc -Ofast -march=native NBSim.c -o NBSim
 #include <stdlib.h>
 #include <math.h>
 #include <stdio.h>
 
 typedef float real;
-#define SOFTENING_SQUARED 0.01
+#define SOFTENING_SQUARED 0.01f
 
 // Data structures real3 and real4
 typedef struct { real x, y, z; }    real3;
@@ -37,17 +37,12 @@ void integrate(real4* out, real4* in,
     {
         real fx = 0, fy = 0, fz = 0;
 
-        for (j = 0; j < i; j++)
-        {
-            real3 ff = bodyBodyInteraction(in[i], in[j]);
-            fx += ff.x; fy += ff.y; fz += ff.z;
-        }
-
-        for (j = i + 1; j < n; j++)
-        {
-            real3 ff = bodyBodyInteraction(in[i], in[j]);
-            fx += ff.x; fy += ff.y; fz += ff.z;
-        }
+        for (j = 0; j < n; j++)
+            if (i != j)
+            {
+                real3 ff = bodyBodyInteraction(in[i], in[j]);
+                fx += ff.x; fy += ff.y; fz += ff.z;
+            }
 
         force[i].x = fx; force[i].y = fy; force[i].z = fz;
     }

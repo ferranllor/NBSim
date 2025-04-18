@@ -41,6 +41,37 @@ typedef struct {
     real dt;                        // Pas de temps
 } BHSim;
 
+
+uint64_t ullMC3Dspread(uint64_t w) {
+    w &= 0x00000000001fffff;
+    w = (w | w << 32) & 0x001f00000000ffff;
+    w = (w | w << 16) & 0x001f0000ff0000ff;
+    w = (w | w << 8) & 0x010f00f00f00f00f;
+    w = (w | w << 4) & 0x10c30c30c30c30c3;
+    w = (w | w << 2) & 0x1249249249249249;
+    return w;
+}
+
+uint64_t ullMC3Dencode(uint32_t x, uint32_t y, uint32_t z) {
+    return ((ullMC3Dspread((uint64_t)x)) | (ullMC3Dspread((uint64_t)y) << 1) | (ullMC3Dspread((uint64_t)z) << 2));
+}
+
+// Function to calculate the 3D Morton index
+uint64_t morton3D(real x, real y, real z, real min, real max) {
+    // Normalize coordinates to [0, 1]
+    x = (x - min) / (max - min);
+    y = (y - min) / (max - min);
+    z = (z - min) / (max - min);
+
+    uint32_t ix = (*(uint32_t*)(&x));
+    uint32_t iy = (*(uint32_t*)(&y));
+    uint32_t iz = (*(uint32_t*)(&z));
+
+    uint64_t res = ullMC3Dencode(ix >> 3, iy >> 3, iz >> 3);
+
+    return res;
+}
+
 void insert(octreeArray* octree, octreeNode node, int pos, real3 relPos, real size)
 {
     octreeNode act = octree->array[pos];
@@ -67,21 +98,6 @@ void insert(octreeArray* octree, octreeNode node, int pos, real3 relPos, real si
 
         int quad = c | b << 1 | a << 2;
 
-        octreeNode* tmp = &octree->array[pos];
-        tmp->x = tmp->x * tmp->w;
-        tmp->y = tmp->y * tmp->w;
-        tmp->z = tmp->z * tmp->w;
-
-        tmp->x += node.x * node.w;
-        tmp->y += node.y * node.w;
-        tmp->z += node.z * node.w;
-
-        tmp->x /= (tmp->w + node.w);
-        tmp->y /= (tmp->w + node.w);
-        tmp->z /= (tmp->w + node.w);
-
-        tmp->w = (tmp->w + node.w);
-
         if (act.children[quad] == 0)
         {
             octree->array[pos].id++;
@@ -107,11 +123,134 @@ void insert(octreeArray* octree, octreeNode node, int pos, real3 relPos, real si
     }
 }
 
+void quickSort_parallel_internal(uint64_t* array, int* indexes, int left, int right, int cutoff)
+{
+    int i = left, j = right;
+    uint64_t tmp1;
+    int tmp2;
+    uint64_t pivot = array[(left + right) / 2];
+
+
+    {
+        /* PARTITION PART */
+        while (i <= j) {
+            while (array[i] < pivot)
+                i++;
+            while (array[j] > pivot)
+                j--;
+            if (i <= j) {
+                tmp1 = array[i];
+                array[i] = array[j];
+                array[j] = tmp1;
+
+                tmp2 = indexes[i];
+                indexes[i] = indexes[j];
+                indexes[j] = tmp2;
+                i++;
+                j--;
+            }
+        }
+    }
+
+
+    if (((right - left) < cutoff)) {
+        if (left < j) { quickSort_parallel_internal(array, indexes, left, j, cutoff); }
+        if (i < right) { quickSort_parallel_internal(array, indexes, i, right, cutoff); }
+
+    }
+    else {
+        #pragma omp task 	
+            quickSort_parallel_internal(array, indexes, left, j, cutoff);
+        #pragma omp task 	
+            quickSort_parallel_internal(array, indexes, i, right, cutoff);
+    }
+
+}
+
+void quickSort_parallel(uint64_t* array, int* indexes, int lenArray)
+{
+    int cutoff = 1000;
+
+    #pragma omp parallel
+    {
+        #pragma omp single nowait
+        {
+            quickSort_parallel_internal(array, indexes, 0, lenArray - 1, cutoff);
+        }
+    }
+}
+
+void sortBodies(BHSim* simulation)
+{
+    uint64_t* mortonIndexes = (uint64_t*)malloc(sizeof(uint64_t) * simulation->nBodies);
+    int* indexes = (int*)malloc(sizeof(int) * simulation->nBodies);
+
+    real4array tmpB;
+    real3array tmpV, tmpF;
+
+    tmpB.x = (real*)malloc(simulation->nBodies * sizeof(real));
+    tmpB.y = (real*)malloc(simulation->nBodies * sizeof(real));
+    tmpB.z = (real*)malloc(simulation->nBodies * sizeof(real));
+    tmpB.w = (real*)malloc(simulation->nBodies * sizeof(real));
+
+    tmpV.x = (real*)malloc(simulation->nBodies * sizeof(real));
+    tmpV.y = (real*)malloc(simulation->nBodies * sizeof(real));
+    tmpV.z = (real*)malloc(simulation->nBodies * sizeof(real));
+
+    tmpF.x = (real*)malloc(simulation->nBodies * sizeof(real));
+    tmpF.y = (real*)malloc(simulation->nBodies * sizeof(real));
+    tmpF.z = (real*)malloc(simulation->nBodies * sizeof(real));
+
+    for (int i = 0; i < simulation->nBodies; i++)
+    {
+        mortonIndexes[i] = morton3D(simulation->bodies.x[i], simulation->bodies.y[i], simulation->bodies.z[i], -(simulation->octree->spaceSize), simulation->octree->spaceSize);
+        indexes[i] = i;
+    }
+
+    quickSort_parallel(mortonIndexes, indexes, simulation->nBodies);
+
+    for (int i = 0; i < simulation->nBodies; i++)
+    {
+        tmpB.x[i] = simulation->bodies.x[indexes[i]];
+        tmpB.y[i] = simulation->bodies.y[indexes[i]];
+        tmpB.z[i] = simulation->bodies.z[indexes[i]];
+        tmpB.w[i] = simulation->bodies.w[indexes[i]];
+        
+        tmpV.x[i] = simulation->vel.x[indexes[i]];
+        tmpV.y[i] = simulation->vel.y[indexes[i]];
+        tmpV.z[i] = simulation->vel.z[indexes[i]];
+
+        tmpF.x[i] = simulation->force.x[indexes[i]];
+        tmpF.y[i] = simulation->force.y[indexes[i]];
+        tmpF.z[i] = simulation->force.z[indexes[i]];
+    }
+
+    free(simulation->vel.x);
+    free(simulation->vel.y);
+    free(simulation->vel.z);
+
+    free(simulation->force.x);
+    free(simulation->force.y);
+    free(simulation->force.z);
+
+    free(simulation->bodies.x);
+    free(simulation->bodies.y);
+    free(simulation->bodies.z);
+    free(simulation->bodies.w);
+
+    simulation->bodies = tmpB;
+    simulation->vel = tmpV;
+    simulation->force = tmpF;
+
+    free(mortonIndexes);
+    free(indexes);
+}
+
 real4 propagateMassTask(octreeNode* array, int pos, int prof)
 {
     if (array[pos].id > 8)
         return (real4) { array[pos].w * array[pos].x, array[pos].w * array[pos].y, array[pos].w * array[pos].z, array[pos].w };
-    else if (prof < 5)
+    else if (prof < 6)
     {
         array[pos].x = 0;
         array[pos].y = 0;
@@ -222,13 +361,16 @@ void buildOctreeArray(BHSim* simulation)
 
     size = pow(2, size);
     octree->spaceSize = size;
+
+    sortBodies(simulation);
+
     octree->nNodes = 1;
     octree->array[0] = (octreeNode){ simulation->bodies.x[0], simulation->bodies.y[0], simulation->bodies.z[0], simulation->bodies.w[0], { 0, 0, 0, 0, 0, 0, 0, 0 }, 9 };
 
     for (int i = 1; i < octree->nBodies; i++)
         insert(octree, (octreeNode) { simulation->bodies.x[i], simulation->bodies.y[i], simulation->bodies.z[i], simulation->bodies.w[i], { 0, 0, 0, 0, 0, 0, 0, 0 }, i + 9 }, 0, (real3) { 0, 0, 0 }, octree->spaceSize);
 
-    //propagateMass(octree);
+    propagateMass(octree);
 }
 
 real3 bodyBodyInteraction(real4 iPos, real4 jPos)
@@ -239,8 +381,8 @@ real3 bodyBodyInteraction(real4 iPos, real4 jPos)
 
     distSqr = rx * rx + ry * ry + rz * rz;
 
-    if (distSqr < SOFTENING_SQUARED) s = jPos.w / powf(SOFTENING_SQUARED, 1.5f);
-    else                             s = jPos.w / powf(distSqr, 1.5f);
+    if (distSqr < SOFTENING_SQUARED) s = jPos.w / powf(SOFTENING_SQUARED, 1.5);
+    else                             s = jPos.w / powf(distSqr, 1.5);
 
     real3 f;
     f.x = rx * s;  f.y = ry * s; f.z = rz * s;

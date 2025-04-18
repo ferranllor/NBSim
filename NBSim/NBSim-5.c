@@ -1,12 +1,11 @@
-// Base parallel version
-// gcc -Ofast -fopenmp -march=native --param vect-max-version-for-alias-checks=30 NBSim.c -o NBSim
+// Reuse work version
+// gcc -Ofast -march=native NBSim.c -o NBSim
 #include <stdlib.h>
 #include <math.h>
 #include <stdio.h>
-#include <omp.h>
 
 typedef float real;
-#define SOFTENING_SQUARED  0.01
+#define SOFTENING_SQUARED  0.01f
 
 // Data structures real3 and real4
 typedef struct { real x, y, z; }    real3;
@@ -34,89 +33,74 @@ real3 bodyBodyInteraction(real4 iPos, real4 jPos)
 
 
 void integrate(real4array out, real4array in,
-    real3array vel, real3array* __restrict fThrds,
+    real3array vel, real3array force,
     real    dt, int n)
 {
     int i, j;
-    int nThrds = omp_get_max_threads();
 
-    #pragma omp parallel num_threads(nThrds)
+    for (i = 0; i < n; i++)
     {
-        int nThrd = omp_get_thread_num();
-        real3array fThrd = fThrds[nThrd];
-
-        for (i = 0; i < n; i++)
-        {
-            fThrd.x[i] = 0; fThrd.y[i] = 0; fThrd.z[i] = 0;
-        }
-
-        #pragma omp for
-        for (i = 0; i < n; i++)
-        {
-            real fx = 0, fy = 0, fz = 0;
-
-            for (j = i + 1; j < n; j++)
-            {
-                real rx, ry, rz, distSqr, si, sj;
-
-                rx = in.x[j] - in.x[i];  ry = in.y[j] - in.y[i];  rz = in.z[j] - in.z[i];
-
-                distSqr = rx * rx + ry * ry + rz * rz;
-
-                if (distSqr < SOFTENING_SQUARED)
-                {
-                    si = in.w[j] / powf(SOFTENING_SQUARED, 1.5);
-                    sj = in.w[i] / powf(SOFTENING_SQUARED, 1.5);
-                }
-                else
-                {
-                    si = in.w[j] / powf(distSqr, 1.5);
-                    sj = in.w[i] / powf(distSqr, 1.5);
-                }
-
-                fx += rx * si;  fy += ry * si; fz += rz * si;
-                fThrd.x[j] -= rx * sj;  fThrd.y[j] -= ry * sj; fThrd.z[j] -= rz * sj;
-            }
-
-            fThrd.x[i] += fx;  fThrd.y[i] += fy;  fThrd.z[i] += fz;
-        }
-
-        #pragma omp for
-        for (i = 0; i < n; i++)
-        {
-            real fx = 0, fy = 0, fz = 0;
-
-            for (int j = 0; j < nThrds; j++)
-            {
-                fx += fThrds[j].x[i];
-                fy += fThrds[j].y[i];
-                fz += fThrds[j].z[i];
-            }
-
-            real px = in.x[i], py = in.y[i], pz = in.z[i], invMass = in.w[i];
-            real vx = vel.x[i], vy = vel.y[i], vz = vel.z[i];
-
-            // acceleration = force / mass; 
-            // new velocity = old velocity + acceleration * deltaTime
-            vx += (fx * invMass) * dt;
-            vy += (fy * invMass) * dt;
-            vz += (fz * invMass) * dt;
-
-            // new position = old position + velocity * deltaTime
-            px += vx * dt;
-            py += vy * dt;
-            pz += vz * dt;
-
-            out.x[i] = px;
-            out.y[i] = py;
-            out.z[i] = pz;
-            out.w[i] = invMass;
-
-            vel.x[i] = vx;
-            vel.y[i] = vy;
-            vel.z[i] = vz;
-        }
+        force.x[i] = 0;  force.y[i] = 0;  force.z[i] = 0;
     }
+
+    #pragma omp parallel for
+    for (i = 0; i < n; i++)
+    {
+        real fx = 0, fy = 0, fz = 0;
+
+        for (j = i + 1; j < n; j++)
+        {
+            real rx, ry, rz, distSqr, si, sj;
+
+            rx = in.x[j] - in.x[i];  
+            ry = in.y[j] - in.y[i];  
+            rz = in.z[j] - in.z[i];
+
+            distSqr = rx * rx + ry * ry + rz * rz;
+
+            if (distSqr < SOFTENING_SQUARED) {
+                si = in.w[j] / powf(SOFTENING_SQUARED, 1.5f);
+                sj = in.w[i] / powf(SOFTENING_SQUARED, 1.5f);
+            }
+            else {
+                si = in.w[j] / powf(distSqr, 1.5f);
+                sj = in.w[i] / powf(distSqr, 1.5f);
+            }
+
+            fx += rx * si;  fy += ry * si; fz += rz * si;
+            force.x[j] -= rx * sj;  force.y[j] -= ry * sj; force.z[j] -= rz * sj;
+        }
+
+        force.x[i] += fx;  force.y[i] += fy;  force.z[i] += fz;
+    }
+
+    for (i = 0; i < n; i++)
+    {
+        real fx = force.x[i], fy = force.y[i], fz = force.z[i];
+        real px = in.x[i], py = in.y[i], pz = in.z[i], invMass = in.w[i];
+        real vx = vel.x[i], vy = vel.y[i], vz = vel.z[i];
+
+        // acceleration = force / mass; 
+        // new velocity = old velocity + acceleration * deltaTime
+        vx += (fx * invMass) * dt;
+        vy += (fy * invMass) * dt;
+        vz += (fz * invMass) * dt;
+
+        // new position = old position + velocity * deltaTime
+        px += vx * dt;
+        py += vy * dt;
+        pz += vz * dt;
+
+        out.x[i] = px;
+        out.y[i] = py;
+        out.z[i] = pz;
+        out.w[i] = invMass;
+
+        vel.x[i] = vx;
+        vel.y[i] = vy;
+        vel.z[i] = vz;
+    }
+
 }
 
 
@@ -244,16 +228,10 @@ int main(int argc, char** argv)
     v.y = (real*)malloc(n * sizeof(real));
     v.z = (real*)malloc(n * sizeof(real));
 
-    int nThrds = omp_get_max_threads();
-
-    real3array* __restrict fThrds = (real3array*)malloc(nThrds * sizeof(real3array));
-
-    for (int i = 0; i < nThrds; i++)
-    {
-        fThrds[i].x = (real*)malloc(n * sizeof(real));
-        fThrds[i].y = (real*)malloc(n * sizeof(real));
-        fThrds[i].z = (real*)malloc(n * sizeof(real));
-    }
+    real3array f;
+    f.x = (real*)malloc(n * sizeof(real));
+    f.y = (real*)malloc(n * sizeof(real));
+    f.z = (real*)malloc(n * sizeof(real));
 
     randomizeBodies(pin, v, 1.54f, 8.0f, n);
 
@@ -262,7 +240,7 @@ int main(int argc, char** argv)
 
     for (i = 0; i < iterations; i++)
     {
-        integrate(pout, pin, v, fThrds, dt, n);
+        integrate(pout, pin, v, f, dt, n);
 
         real* tmpx, * tmpy, * tmpz, * tmpw;
 
@@ -286,18 +264,9 @@ int main(int argc, char** argv)
     printf("Average position: (%f,%f,%f)\n", p_av.x, p_av.y, p_av.z);
     printf("Body-0  position: (%f,%f,%f)\n", pin.x[0], pin.y[0], pin.z[0]);
 
-    for (int i = 0; i < nThrds; i++)
-    {
-        free(fThrds[i].x);
-        free(fThrds[i].y);
-        free(fThrds[i].z);
-    }
-
-    free(fThrds);
-
-    free(pin.x);  free(pout.x);  free(v.x);
-    free(pin.y);  free(pout.y);  free(v.y);
-    free(pin.z);  free(pout.z);  free(v.z);
+    free(pin.x);  free(pout.x);  free(v.x);  free(f.x);
+    free(pin.y);  free(pout.y);  free(v.y);  free(f.y);
+    free(pin.z);  free(pout.z);  free(v.z);  free(f.z);
     free(pin.w);  free(pout.w);
 
     return 0;

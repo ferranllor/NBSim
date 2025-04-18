@@ -1,11 +1,11 @@
-// Reuse work version
+// Split arrays version
 // gcc -Ofast -march=native NBSim.c -o NBSim
 #include <stdlib.h>
 #include <math.h>
 #include <stdio.h>
 
 typedef float real;
-#define SOFTENING_SQUARED  0.01
+#define SOFTENING_SQUARED  0.01f
 
 // Data structures real3 and real4
 typedef struct { real x, y, z; }    real3;
@@ -40,37 +40,26 @@ void integrate(real4array out, real4array in,
 
     for (i = 0; i < n; i++)
     {
-        force.x[i] = 0;  force.y[i] = 0;  force.z[i] = 0;
-    }
-
-    for (i = 0; i < n; i++)
-    {
         real fx = 0, fy = 0, fz = 0;
+        real3 self = (real3){-in.x[i], -in.y[i], -in.z[i]};
 
-        for (j = i + 1; j < n; j++)
+        for (j = 0; j < n; j++)
         {
-            real rx, ry, rz, distSqr, si, sj;
+            real rx = self.x, ry = self.y, rz = self.z, distSqr, si;
 
-            rx = in.x[j] - in.x[i];  ry = in.y[j] - in.y[i];  rz = in.z[j] - in.z[i];
+            rx += in.x[j];  ry += in.y[j];  rz += in.z[j];
 
             distSqr = rx * rx + ry * ry + rz * rz;
 
             if (distSqr < SOFTENING_SQUARED)
-            {
-                si = in.w[j] / powf(SOFTENING_SQUARED, 1.5);
-                sj = in.w[i] / powf(SOFTENING_SQUARED, 1.5);
-            }
+                si = in.w[j] / powf(SOFTENING_SQUARED, 1.5f);
             else
-            {
-                si = in.w[j] / powf(distSqr, 1.5);
-                sj = in.w[i] / powf(distSqr, 1.5);
-            }
+                si = in.w[j] / powf(distSqr, 1.5f);
 
             fx += rx * si;  fy += ry * si; fz += rz * si;
-            force.x[j] -= rx * sj;  force.y[j] -= ry * sj; force.z[j] -= rz * sj;
         }
 
-        force.x[i] += fx;  force.y[i] += fy;  force.z[i] += fz;
+        force.x[i] = fx;  force.y[i] = fy;  force.z[i] = fz;
     }
 
     for (i = 0; i < n; i++)

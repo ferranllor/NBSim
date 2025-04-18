@@ -5,7 +5,7 @@
 #include <stdio.h>
 
 typedef float real;
-#define SOFTENING_SQUARED  0.01
+#define SOFTENING_SQUARED  0.01f
 
 // Data structures real3 and real4
 typedef struct { real x, y, z; }    real3;
@@ -157,9 +157,9 @@ real buildOctree(real4* in, octreeNode* root, int n)
             maxZ = z;
     }
 
-    int X = log2(maxX);
-    int Y = log2(maxY);
-    int Z = log2(maxZ);
+    int X = ceil(log2(maxX));
+    int Y = ceil(log2(maxY));
+    int Z = ceil(log2(maxZ));
 
     real size = X;
 
@@ -216,8 +216,8 @@ real3 bodyBodyInteraction(real4 iPos, real4 jPos)
 
     distSqr = rx * rx + ry * ry + rz * rz;
 
-    if (distSqr < SOFTENING_SQUARED) s = jPos.w / powf(SOFTENING_SQUARED, 1.5);
-    else                             s = jPos.w / powf(distSqr, 1.5);
+    if (distSqr < SOFTENING_SQUARED) s = jPos.w / powf(SOFTENING_SQUARED, 1.5f);
+    else                             s = jPos.w / powf(distSqr, 1.5f);
 
     real3 f;
     f.x = rx * s;  f.y = ry * s; f.z = rz * s;
@@ -242,34 +242,37 @@ real3 integrateNode(real4 node, octreeNode* root, unsigned int n, unsigned int i
     {
         sp = sp - 1;
         octreeNode* act = stack[sp];
-
-        if (act->id > 0)
+        
+        if (act->id != id) 
         {
-            real3 ff = bodyBodyInteraction(node, (real4) { act->x, act->y, act->z, act->w });
-            fx += ff.x;  fy += ff.y; fz += ff.z;
-        }
-        else
-        {
-            real p = stackP[sp];
-
-            real rx = act->x - node.x, ry = act->y - node.y, rz = act->z - node.z;
-
-            real dist = sqrtf(rx * rx + ry * ry + rz * rz);
-
-            if (p / dist < theta)
+            if (act->id > 0)
             {
                 real3 ff = bodyBodyInteraction(node, (real4) { act->x, act->y, act->z, act->w });
                 fx += ff.x;  fy += ff.y; fz += ff.z;
             }
-            else if (act->id != id)
+            else
             {
-                for (int child = 0; child < 8; child++)
+                real p = stackP[sp];
+      
+                real rx = act->x - node.x, ry = act->y - node.y, rz = act->z - node.z;
+      
+                real dist = sqrtf(rx * rx + ry * ry + rz * rz);
+      
+                if (p / dist < theta)
                 {
-                    if (act->p[child] != NULL)
+                    real3 ff = bodyBodyInteraction(node, (real4) { act->x, act->y, act->z, act->w });
+                    fx += ff.x;  fy += ff.y; fz += ff.z;
+                }
+                else 
+                {
+                    for (int child = 0; child < 8; child++)
                     {
-                        stack[sp] = act->p[child];
-                        stackP[sp] = p / 2;
-                        sp++;
+                        if (act->p[child] != NULL)
+                        {
+                            stack[sp] = act->p[child];
+                            stackP[sp] = p / 2;
+                            sp++;
+                        }
                     }
                 }
             }
@@ -288,6 +291,7 @@ void integrateOctree(real4* in, real4* out, octreeNode* root, real3* force, real
 {
     int i;
 
+    #pragma omp parallel for
     for (i = 0; i < n; i++)
     {
         real3 f = integrateNode(in[i], root, n, i + 1, theta, size);

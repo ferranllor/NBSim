@@ -1,46 +1,62 @@
-// BASELINE VERSION
-//
 #include <stdlib.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdbool.h>
+#include <stdint.h>
+//#include <GL/glew.h>
+//#include <GLFW/glfw3.h>
 
 typedef float real;
-#define SOFTENING_SQUARED  0.01
+#define SOFTENING_SQUARED  0.01f
 
 // Data structures real3 and real4
+typedef struct { real* __restrict x, * __restrict y, * __restrict z; }    real3array;
+typedef struct { real* __restrict x, * __restrict y, * __restrict z, * __restrict w; } real4array;
+
 typedef struct { real x, y, z; }    real3;
 typedef struct { real x, y, z, w; } real4;
 
-typedef struct octreeNode octreeNode;
+typedef struct {
+    real x, y, z, w;    // Pos i massa
+    int children[8];    // Pos dels fills
+    unsigned id;        // ID del node, li sumem 8 i el fem servir tamb per el nº de fills
+} octreeNode;
 
-struct octreeNode { real x, y, z, w; octreeNode** p; unsigned int id; };
+typedef struct {
+    octreeNode* __restrict array;   // Array amb els nodes
+    int nBodies;                    // Array amb els nodes
+    int nNodes;                     // nº de nodes (cossos i centres de masses)
+    int arraySize;                  // Mida del array de nodes
+    real spaceSize;                 // Mida del espai des de root
+    real despl;                     // Desplaçament respecte el origen (0,0,0), si el sistema es desplaça gaire el corregirem restant a tots els cossos aquest, podem obtenir la pos correcta un altre cop sumant aizo a tots als cosses
+} octreeArray;
 
-void insert(octreeNode* root, octreeNode node, real size, real3 relPos)
+typedef struct {
+    octreeArray* octree;            // Arbre octal
+    real4array bodies;              // Arbre octal
+    real3array force;               // Força dels nodes
+    real3array vel;                 // Velocitat dels nodes
+    int nBodies;                    // Nº de cossos
+    real theta;                     // Valor per determinar si fem la aprox amb un centre de masses o no
+    real dt;                        // Pas de temps
+} BHSim;
+
+void insert(octreeArray* octree, octreeNode node, int pos, real3 relPos, real size)
 {
-    _Bool trobat = 0;
-    octreeNode* act = root;
+    octreeNode act = octree->array[pos];
     real x = node.x, y = node.y, z = node.z;
 
-    while (!trobat)
+    while (true)
     {
-        if (act->p == NULL)
+        if (act.id > 8)
         {
-            act->p = (octreeNode**)malloc(8 * sizeof(octreeNode*));
-            for (int i = 0; i < 8; i++)
-                act->p[i] = NULL;
-
-            octreeNode tmp = (octreeNode){ act->x, act->y, act->z, act->w, NULL, act->id };
-            act->id = 0;
-            act->x = 0;
-            act->y = 0;
-            act->z = 0;
-            act->w = 0;
-
-            insert(act, tmp, size, relPos);
-
+            octree->array[pos].id = 0;
+            insert(octree, act, pos, relPos, size);
+            act = octree->array[pos];
         }
 
         size /= 2;
+
         int quad;
 
         if (x > relPos.x)
@@ -108,47 +124,130 @@ void insert(octreeNode* root, octreeNode node, real size, real3 relPos)
             }
         }
 
-        act->x = act->x * act->w;
-        act->y = act->y * act->w;
-        act->z = act->z * act->w;
+        octreeNode* tmp = &octree->array[pos];
+        tmp->x = tmp->x * tmp->w;
+        tmp->y = tmp->y * tmp->w;
+        tmp->z = tmp->z * tmp->w;
 
-        act->x += node.x * node.w;
-        act->y += node.y * node.w;
-        act->z += node.z * node.w;
+        tmp->x += node.x * node.w;
+        tmp->y += node.y * node.w;
+        tmp->z += node.z * node.w;
 
-        act->x /= (act->w + node.w);
-        act->y /= (act->w + node.w);
-        act->z /= (act->w + node.w);
+        tmp->x /= (tmp->w + node.w);
+        tmp->y /= (tmp->w + node.w);
+        tmp->z /= (tmp->w + node.w);
 
-        act->w = (act->w + node.w);
+        tmp->w = (tmp->w + node.w);
 
-        if (act->p[quad] == NULL)
+        if (act.children[quad] == 0)
         {
-            act->p[quad] = (octreeNode*)malloc(sizeof(octreeNode));
-            act->p[quad]->x = node.x;
-            act->p[quad]->y = node.y;
-            act->p[quad]->z = node.z;
-            act->p[quad]->w = node.w;
-            act->p[quad]->p = NULL;
-            act->p[quad]->id = node.id;
+            octree->array[pos].id++;
+            octree->array[pos].children[quad] = octree->nNodes;
+            octree->array[octree->nNodes].x = node.x;
+            octree->array[octree->nNodes].y = node.y;
+            octree->array[octree->nNodes].z = node.z;
+            octree->array[octree->nNodes].w = node.w;
+            octree->array[octree->nNodes].id = node.id;
+
+            for (int i = 0; i < 8; i++)
+                octree->array[octree->nNodes].children[i] = 0;
+
+            octree->nNodes++;
 
             return;
         }
         else
         {
-            act = act->p[quad];
+            pos = act.children[quad];
+            act = octree->array[pos];
         }
     }
 }
 
-
-real buildOctree(real4* in, octreeNode* root, int n)
+real4 propagateMassTask(octreeNode* array, int pos, int prof)
 {
-    real maxX = fabs(in[0].x), maxY = fabs(in[0].y), maxZ = fabs(in[0].z);
-
-    for (int i = 1; i < n; i++)
+    if (array[pos].id > 8)
+        return (real4) { array[pos].w * array[pos].x, array[pos].w * array[pos].y, array[pos].w * array[pos].z, array[pos].w };
+    else if (prof < 5)
     {
-        real x = fabs(in[i].x), y = fabs(in[i].y), z = fabs(in[i].z);
+        array[pos].x = 0;
+        array[pos].y = 0;
+        array[pos].z = 0;
+        array[pos].w = 0;
+
+        for (int i = 0; i < 8; i++)
+        {
+            if (array[pos].children[i] > 0)
+            {
+                #pragma omp task
+                {
+                    real4 res = propagateMassTask(array, array[pos].children[i], prof + 1);
+
+                    #pragma omp critical
+                    {
+                        array[pos].x += res.x;
+                        array[pos].y += res.y;
+                        array[pos].z += res.z;
+                        array[pos].w += res.w;
+                    }
+                }
+            }
+        }
+
+        #pragma omp taskwait
+
+        array[pos].x /= array[pos].w;
+        array[pos].y /= array[pos].w;
+        array[pos].z /= array[pos].w;
+    }
+    else
+    {
+        array[pos].x = 0;
+        array[pos].y = 0;
+        array[pos].z = 0;
+        array[pos].w = 0;
+
+        for (int i = 0; i < 8; i++)
+        {
+            if (array[pos].children[i] > 0)
+            {
+                real4 res = propagateMassTask(array, array[pos].children[i], prof + 1);
+
+                array[pos].x += res.x;
+                array[pos].y += res.y;
+                array[pos].z += res.z;
+                array[pos].w += res.w;
+            }
+        }
+
+        array[pos].x /= array[pos].w;
+        array[pos].y /= array[pos].w;
+        array[pos].z /= array[pos].w;
+    }
+
+    return (real4) { array[pos].w* array[pos].x, array[pos].w* array[pos].y, array[pos].w* array[pos].z, array[pos].w };
+}
+
+void propagateMass(octreeArray* octree)
+{
+    #pragma omp parallel
+    {
+        #pragma omp single nowait
+        {
+            propagateMassTask(octree->array, 0, 0);
+        }
+    }
+}
+
+void buildOctreeArray(BHSim* simulation)
+{
+    octreeArray* octree = simulation->octree;
+
+    real maxX = fabs(simulation->bodies.x[0]), maxY = fabs(simulation->bodies.y[0]), maxZ = fabs(simulation->bodies.z[0]);
+
+    for (int i = 1; i < octree->nBodies; i++)
+    {
+        real x = fabs(simulation->bodies.x[i]), y = fabs(simulation->bodies.y[i]), z = fabs(simulation->bodies.z[i]);
         if (x > maxX)
             maxX = x;
         if (y > maxY)
@@ -157,11 +256,11 @@ real buildOctree(real4* in, octreeNode* root, int n)
             maxZ = z;
     }
 
-    int X = log2(maxX);
-    int Y = log2(maxY);
-    int Z = log2(maxZ);
+    int X = ceil(log2(maxX));
+    int Y = ceil(log2(maxY));
+    int Z = ceil(log2(maxZ));
 
-    real size = X;
+    int size = X;
 
     if (size < Y)
     {
@@ -178,34 +277,15 @@ real buildOctree(real4* in, octreeNode* root, int n)
             size = Z;
     }
 
-    size = powf(2, size);
+    size = pow(2, size);
+    octree->spaceSize = size;
+    octree->nNodes = 1;
+    octree->array[0] = (octreeNode){ simulation->bodies.x[0], simulation->bodies.y[0], simulation->bodies.z[0], simulation->bodies.w[0], { 0, 0, 0, 0, 0, 0, 0, 0 }, 9 };
 
-    root->x = in[0].x;
-    root->y = in[0].y;
-    root->z = in[0].z;
-    root->w = in[0].w;
-    root->id = 1;
-    root->p = NULL;
+    for (int i = 1; i < octree->nBodies; i++)
+        insert(octree, (octreeNode) { simulation->bodies.x[i], simulation->bodies.y[i], simulation->bodies.z[i], simulation->bodies.w[i], { 0, 0, 0, 0, 0, 0, 0, 0 }, i + 9 }, 0, (real3) { 0, 0, 0 }, octree->spaceSize);
 
-    for (int i = 1; i < n; i++)
-        insert(root, (octreeNode) { in[i].x, in[i].y, in[i].z, in[i].w, NULL, i + 1 }, size, (real3) { 0, 0, 0 });
-
-    return size;
-}
-
-void freeOctree(octreeNode* node)
-{
-    if (node->p != NULL)
-    {
-        for (int i = 0; i < 8; i++)
-            if (node->p[i] != NULL)
-                freeOctree(node->p[i]);
-        free(node->p);
-    }
-
-    free(node);
-
-    return;
+    //propagateMass(octree);
 }
 
 real3 bodyBodyInteraction(real4 iPos, real4 jPos)
@@ -216,8 +296,8 @@ real3 bodyBodyInteraction(real4 iPos, real4 jPos)
 
     distSqr = rx * rx + ry * ry + rz * rz;
 
-    if (distSqr < SOFTENING_SQUARED) s = jPos.w / powf(SOFTENING_SQUARED, 1.5);
-    else                             s = jPos.w / powf(distSqr, 1.5);
+    if (distSqr < SOFTENING_SQUARED) s = jPos.w / powf(SOFTENING_SQUARED, 1.5f);
+    else                             s = jPos.w / powf(distSqr, 1.5f);
 
     real3 f;
     f.x = rx * s;  f.y = ry * s; f.z = rz * s;
@@ -225,114 +305,105 @@ real3 bodyBodyInteraction(real4 iPos, real4 jPos)
     return f;
 }
 
-real3 integrateNode(real4 node, octreeNode* root, unsigned int n, unsigned int id, real theta, real size)
+real3 integrateArrayNode(real4 node, octreeArray* octree, octreeNode* stackNodes, real* stackP, real theta, real size, int id)
 {
-    int sp = 1;
-    // theta = d/r
-
-    octreeNode** stack = (octreeNode**)malloc(n * sizeof(octreeNode*));
-    stack[0] = root;
-
-    real* stackP = (real*)malloc(n * sizeof(real));
+    stackNodes[0] = octree->array[0];
     stackP[0] = size;
 
     real fx = 0, fy = 0, fz = 0;
 
+    // real blockDist = p / (theta * blocksize)
+
+    int sp = 1;
+
     while (sp > 0)
     {
         sp = sp - 1;
-        octreeNode* act = stack[sp];
+        octreeNode act = stackNodes[sp];
 
-        real rx, ry, rz, distSqr;
-
-        rx = act->x - node.x;  ry = act->y - node.y;  rz = act->z - node.z;
-
-        distSqr = rx * rx + ry * ry + rz * rz;
-
-        if (act->id > 0)
+        if (act.id != id)
         {
-            real s;
-
-            if (distSqr < SOFTENING_SQUARED) s = act->w / powf(SOFTENING_SQUARED, 1.5);
-            else                             s = act->w / powf(distSqr, 1.5);
-
-            fx += rx * s;  fy += ry * s; fz += rz * s;
-        }
-        else
-        {
-            real p = stackP[sp];
-
-            real dist = sqrtf(distSqr);
-
-            if (p / dist < theta)
+            if (act.id > 8)
             {
-                real s;
-
-                if (distSqr < SOFTENING_SQUARED) s = act->w / powf(SOFTENING_SQUARED, 1.5);
-                else                             s = act->w / powf(distSqr, 1.5);
-
-                fx += rx * s;  fy += ry * s; fz += rz * s;
+                real3 ff = bodyBodyInteraction(node, (real4) { act.x, act.y, act.z, act.w });
+                fx += ff.x;  fy += ff.y; fz += ff.z;
             }
-            else if (act->id != id)
+            else
             {
-                for (int child = 0; child < 8; child++)
+                real p = stackP[sp];
+
+                real rx = act.x - node.x, ry = act.y - node.y, rz = act.z - node.z;
+
+                real dist = sqrtf(rx * rx + ry * ry + rz * rz);
+
+                if (p / dist < theta)
                 {
-                    if (act->p[child] != NULL)
+                    real3 ff = bodyBodyInteraction(node, (real4) { act.x, act.y, act.z, act.w });
+                    fx += ff.x;  fy += ff.y; fz += ff.z;
+                }
+                else
+                {
+                    for (int child = 0; child < 8; child++)
                     {
-                        stack[sp] = act->p[child];
-                        stackP[sp] = p / 2;
-                        sp++;
+                        if (act.children[child] > 0)
+                        {
+                            stackNodes[sp] = octree->array[act.children[child]];
+                            stackP[sp] = p / 2;
+                            sp++;
+                        }
                     }
                 }
             }
         }
-
     }
-
-    free(stack);
-    free(stackP);
 
     return (real3) { fx, fy, fz };
 }
 
-
-void integrateOctree(real4* in, real4* out, octreeNode* root, real3* force, real3* vel, real dt, unsigned int n, real theta, real size)
+void integrateOctreeArray(BHSim* simulation)
 {
-    int i;
-
-    for (i = 0; i < n; i++)
+    #pragma omp parallel
     {
-        real3 f = integrateNode(in[i], root, n, i + 1, theta, size);
+        octreeNode* stack = (octreeNode*)malloc(simulation->nBodies * sizeof(octreeNode));
+        real* stackP = (real*)malloc(simulation->nBodies * sizeof(real));
 
-        force[i].x = f.x;  force[i].y = f.y;  force[i].z = f.z;
+        int i;
+        
+        #pragma omp for
+        for (i = 0; i < simulation->nBodies; i++)
+        {
+            real4 body = (real4){ simulation->bodies.x[i], simulation->bodies.y[i], simulation->bodies.z[i], simulation->bodies.w[i] };
+            real3 f = integrateArrayNode(body, simulation->octree, stack, stackP, simulation->theta, simulation->octree->spaceSize, i + 9);
 
-        real fx = force[i].x, fy = force[i].y, fz = force[i].z;
-        real px = in[i].x, py = in[i].y, pz = in[i].z, invMass = in[i].w;
-        real vx = vel[i].x, vy = vel[i].y, vz = vel[i].z;
+            real fx = f.x, fy = f.y, fz = f.z;
+            real px = simulation->bodies.x[i], py = simulation->bodies.y[i], pz = simulation->bodies.z[i], invMass = simulation->bodies.w[i];
+            real vx = simulation->vel.x[i], vy = simulation->vel.y[i], vz = simulation->vel.z[i];
 
-        // acceleration = force / mass; 
-        // new velocity = old velocity + acceleration * deltaTime
-        vx += (fx * invMass) * dt;
-        vy += (fy * invMass) * dt;
-        vz += (fz * invMass) * dt;
+            // EULER STEP
+            // acceleration = force / mass; 
+            // new velocity = old velocity + acceleration * deltaTime
+            vx += (fx * invMass) * simulation->dt;
+            vy += (fy * invMass) * simulation->dt;
+            vz += (fz * invMass) * simulation->dt;
 
-        // new position = old position + velocity * deltaTime
-        px += vx * dt;
-        py += vy * dt;
-        pz += vz * dt;
+            // new position = old position + velocity * deltaTime
+            px += vx * simulation->dt;
+            py += vy * simulation->dt;
+            pz += vz * simulation->dt;
 
-        out[i].x = px;
-        out[i].y = py;
-        out[i].z = pz;
-        out[i].w = invMass;
+            simulation->bodies.x[i] = px;
+            simulation->bodies.y[i] = py;
+            simulation->bodies.z[i] = pz;
 
-        vel[i].x = vx;
-        vel[i].y = vy;
-        vel[i].z = vz;
+            simulation->vel.x[i] = vx;
+            simulation->vel.y[i] = vy;
+            simulation->vel.z[i] = vz;
+        }
+
+        free(stack);
+        free(stackP);
     }
 }
-
-
 
 real dot(real v0[3], real v1[3])
 {
@@ -361,8 +432,8 @@ void cross(real out[3], real v0[3], real v1[3])
 }
 
 
-void randomizeBodies(real4* pos,
-    real3* vel,
+void randomizeBodies(real4array pos,
+    real3array vel,
     float clusterScale,
     float velocityScale,
     int   n)
@@ -388,10 +459,10 @@ void randomizeBodies(real4* pos,
         if (len > 1) // discard position and generate new one
             continue;
 
-        pos[i].x = point[0] * (inner + (outer - inner) * rand() / (real)RAND_MAX);
-        pos[i].y = point[1] * (inner + (outer - inner) * rand() / (real)RAND_MAX);
-        pos[i].z = point[2] * (inner + (outer - inner) * rand() / (real)RAND_MAX);
-        pos[i].w = 1.0f;
+        pos.x[i] = point[0] * (inner + (outer - inner) * rand() / (real)RAND_MAX);
+        pos.y[i] = point[1] * (inner + (outer - inner) * rand() / (real)RAND_MAX);
+        pos.z[i] = point[2] * (inner + (outer - inner) * rand() / (real)RAND_MAX);
+        pos.w[i] = 1.0f;
 
         real axis[3] = { 0.0f, 0.0f, 1.0f };
 
@@ -401,73 +472,105 @@ void randomizeBodies(real4* pos,
             axis[1] = point[0];
             normalize(axis);
         }
-        real vv[3] = { (real)pos[i].x, (real)pos[i].y, (real)pos[i].z };
+        real vv[3] = { (real)pos.x[i], (real)pos.y[i], (real)pos.z[i] };
         real vv0[3];
 
         cross(vv0, vv, axis);
-        vel[i].x = vv0[0] * vscale;
-        vel[i].y = vv0[1] * vscale;
-        vel[i].z = vv0[2] * vscale;
+        vel.x[i] = vv0[0] * vscale;
+        vel.y[i] = vv0[1] * vscale;
+        vel.z[i] = vv0[2] * vscale;
 
         i++;
     }
 }
 
 
-real3 average(real4* p, int n)
+real3 average(real4array p, int n)
 {
     int i;
     real3 av = { 0.0, 0.0, 0.0 };
     for (i = 0; i < n; i++)
     {
-        av.x += p[i].x;
-        av.y += p[i].y;
-        av.z += p[i].z;
+        av.x += p.x[i];
+        av.y += p.y[i];
+        av.z += p.z[i];
     }
     av.x /= n;
     av.y /= n;
     av.z /= n;
     return av;
 }
+void freeAll(BHSim* simulation)
+{
+    free(simulation->octree->array);
+    free(simulation->octree);
 
+    free(simulation->vel.x);
+    free(simulation->vel.y);
+    free(simulation->vel.z);
+
+    free(simulation->force.x);
+    free(simulation->force.y);
+    free(simulation->force.z);
+
+    free(simulation->bodies.x);
+    free(simulation->bodies.y);
+    free(simulation->bodies.z);
+    free(simulation->bodies.w);
+
+    free(simulation);
+}
 
 int main(int argc, char** argv)
 {
-    int i, j, n = 1000000;
     int iterations = 10;
-    real dt = 0.001667;
-    real theta = 0.5;
 
-    if (argc >= 2) theta = atof(argv[1]);
-    if (argc >= 3) n = atoi(argv[2]);
+    BHSim* simulation = (BHSim*)malloc(sizeof(BHSim));
+
+    simulation->nBodies = 1000000;
+    simulation->dt = 0.001667;
+    simulation->theta = 0.5;
+
+    if (argc >= 2) simulation->theta = atof(argv[1]);
+    if (argc >= 3) simulation->nBodies = atoi(argv[2]);
     if (argc >= 4) iterations = atoi(argv[3]);
 
-    real4* pin = (real4*)malloc(n * sizeof(real4));
-    real4* pout = (real4*)malloc(n * sizeof(real4));
-    real4* tmp;
-    real3* v = (real3*)malloc(n * sizeof(real3));
-    real3* f = (real3*)malloc(n * sizeof(real3));
+    simulation->bodies.x = (real*)malloc(simulation->nBodies * sizeof(real));
+    simulation->bodies.y = (real*)malloc(simulation->nBodies * sizeof(real));
+    simulation->bodies.z = (real*)malloc(simulation->nBodies * sizeof(real));
+    simulation->bodies.w = (real*)malloc(simulation->nBodies * sizeof(real));
 
-    randomizeBodies(pin, v, 1.54f, 8.0f, n);
+    simulation->vel.x = (real*)malloc(simulation->nBodies * sizeof(real));
+    simulation->vel.y = (real*)malloc(simulation->nBodies * sizeof(real));
+    simulation->vel.z = (real*)malloc(simulation->nBodies * sizeof(real));
 
-    printf("n=%d bodies for %d iterations:\n", n, iterations);
+    simulation->force.x = (real*)malloc(simulation->nBodies * sizeof(real));
+    simulation->force.y = (real*)malloc(simulation->nBodies * sizeof(real));
+    simulation->force.z = (real*)malloc(simulation->nBodies * sizeof(real));
 
-    for (i = 0; i < iterations; i++)
+    simulation->octree = (octreeArray*)malloc(sizeof(octreeArray));
+
+    simulation->octree->nBodies = simulation->nBodies;
+    simulation->octree->arraySize = simulation->nBodies * 2;
+    simulation->octree->array = (octreeNode*)malloc(simulation->octree->arraySize * sizeof(octreeNode));
+
+    randomizeBodies(simulation->bodies, simulation->vel, 1.54f, 8.0f, simulation->nBodies);
+
+    printf("n=%d bodies for %d iterations:\n", simulation->nBodies, iterations);
+
+    for (int it = 0; it < iterations; it++)
     {
-        octreeNode* root = (octreeNode*)malloc(sizeof(octreeNode));
-        real size = buildOctree(pin, root, n);
-        integrateOctree(pin, pout, root, f, v, dt, n, theta, size);
-        tmp = pout;
-        pout = pin;
-        pin = tmp;
-        freeOctree(root);
+        buildOctreeArray(simulation);
+        integrateOctreeArray(simulation);
     }
 
-    real3 p_av = average(pin, n);
+    real3 p_av = average(simulation->bodies, simulation->nBodies);
     printf("Average position: (%f,%f,%f)\n", p_av.x, p_av.y, p_av.z);
-    printf("Body-0  position: (%f,%f,%f)\n", pin[0].x, pin[0].y, pin[0].z);
+    printf("Body-0  position: (%f,%f,%f)\n", simulation->bodies.x[0], simulation->bodies.y[0], simulation->bodies.z[0]);
 
-    free(pin);  free(pout);  free(v);  free(f);
+    freeAll(simulation);
 
     return 0;
 }
+
+

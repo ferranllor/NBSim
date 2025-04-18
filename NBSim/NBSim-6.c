@@ -1,4 +1,4 @@
-// Dynamic for version
+// Base parallel version
 // gcc -Ofast -fopenmp -march=native --param vect-max-version-for-alias-checks=30 NBSim.c -o NBSim
 #include <stdlib.h>
 #include <math.h>
@@ -6,7 +6,7 @@
 #include <omp.h>
 
 typedef float real;
-#define SOFTENING_SQUARED  0.01
+#define SOFTENING_SQUARED  0.01f
 
 // Data structures real3 and real4
 typedef struct { real x, y, z; }    real3;
@@ -50,7 +50,7 @@ void integrate(real4array out, real4array in,
             fThrd.x[i] = 0; fThrd.y[i] = 0; fThrd.z[i] = 0;
         }
 
-        #pragma omp for schedule(dynamic)
+        #pragma omp for
         for (i = 0; i < n; i++)
         {
             real fx = 0, fy = 0, fz = 0;
@@ -59,19 +59,21 @@ void integrate(real4array out, real4array in,
             {
                 real rx, ry, rz, distSqr, si, sj;
 
-                rx = in.x[j] - in.x[i];  ry = in.y[j] - in.y[i];  rz = in.z[j] - in.z[i];
+                rx = in.x[j] - in.x[i];  
+                ry = in.y[j] - in.y[i];  
+                rz = in.z[j] - in.z[i];
 
                 distSqr = rx * rx + ry * ry + rz * rz;
 
                 if (distSqr < SOFTENING_SQUARED)
                 {
-                    si = in.w[j] / powf(SOFTENING_SQUARED, 1.5);
-                    sj = in.w[i] / powf(SOFTENING_SQUARED, 1.5);
+                    si = in.w[j] / powf(SOFTENING_SQUARED, 1.5f);
+                    sj = in.w[i] / powf(SOFTENING_SQUARED, 1.5f);
                 }
                 else
                 {
-                    si = in.w[j] / powf(distSqr, 1.5);
-                    sj = in.w[i] / powf(distSqr, 1.5);
+                    si = in.w[j] / powf(distSqr, 1.5f);
+                    sj = in.w[i] / powf(distSqr, 1.5f);
                 }
 
                 fx += rx * si;  fy += ry * si; fz += rz * si;

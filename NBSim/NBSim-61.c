@@ -1,4 +1,4 @@
-// No converts
+// Dynamic for version
 // gcc -Ofast -fopenmp -march=native --param vect-max-version-for-alias-checks=30 NBSim.c -o NBSim
 #include <stdlib.h>
 #include <math.h>
@@ -294,7 +294,7 @@ int main(int argc, char** argv)
     }
 
     free(fThrds);
-    
+
     free(pin.x);  free(pout.x);  free(v.x);
     free(pin.y);  free(pout.y);  free(v.y);
     free(pin.z);  free(pout.z);  free(v.z);
