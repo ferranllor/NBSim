@@ -3,3 +3,6 @@
 ################################################################################
 
 /.vs
+.vscode/settings.json
+NBSim/.vscode/settings.json
+NBSim/exec
