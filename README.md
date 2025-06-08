@@ -3,17 +3,17 @@ This is a personal project to learn and apply HPC stuff. My plan is to first mak
 To keep track of what is done and what is to be implemented here is a TODO list:  
 
 # Direct version:  
-    ~~Vectorised~~  
-    ~~OpenMP~~  
-    OpenMPI  
-    ~~OpenACC~~  
-    CUDA  
+    - [x] Vectorised
+    - [x] OpenMP
+    - [ ] OpenMPI  
+    - [x] OpenACC  
+    - [ ] CUDA  
   
 # Barnes-Hut:  
-    ~~Vectorised~~  
-    ~~OpenMP~~  
-    OpenMPI  
-    OpenACC  
-    CUDA  
+    - [x] Vectorised  
+    - [x] OpenMP  
+    - [ ] OpenMPI  
+    - [ ] OpenACC  
+    - [ ] CUDA  
   
 If for some reason you stubled onto this repo and want to learn how it works there is a presentation (in spanish). Though is consists basically of images and colors, so it should be easy enough to understand  
