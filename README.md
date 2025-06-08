@@ -16,4 +16,4 @@ To keep track of what is done and what is to be implemented here is a TODO list:
     - [ ] OpenACC  
     - [ ] CUDA  
   
-If for some reason you stubled onto this repo and want to learn how it works there is a presentation (in spanish). Though is consists basically of images and colors, so it should be easy enough to understand  
+If for some reason you stumbled onto this repo and want to learn how it works there is a presentation (though in spanish) which is consists basically of images and colors, so it should be easy enough to understand  
