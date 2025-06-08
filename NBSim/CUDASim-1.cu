@@ -19,7 +19,7 @@ typedef struct { real x, y, z, w; } real4;
 typedef struct { real* __restrict x, * __restrict y, * __restrict z; } real3array;
 typedef struct { real* __restrict x, * __restrict y, * __restrict z, * __restrict w; } real4array;
 
-bool debug = true;
+bool debug = false;
 double cp_Wtime(){
     struct timeval tv;
     gettimeofday(&tv, NULL);
@@ -412,6 +412,7 @@ cudaError_t cudaSim(int n, int iterations, real dt, real4array h_pin, real4array
 
         if (debug)
         {
+            cudaDeviceSynchronize();
             time = cp_Wtime() - ini;
             if (i > 0) {
                 printf("Time to do step %d: %lf sec\n", i, time);
@@ -468,14 +469,12 @@ int main(int argc, char** argv)
     int n = 20000;
     int iterations = 10;
     real dt = 0.001667;
-    double ini;
+    double ini, time;
 
     if (argc >= 2) n = atoi(argv[1]);
     if (argc >= 3) iterations = atoi(argv[2]);
 
-    if (debug) 
-        ini = cp_Wtime();
-
+    ini = cp_Wtime();
 
     real4array pin;
     pin.x = (real*)malloc(n * sizeof(real));
@@ -522,10 +521,8 @@ int main(int argc, char** argv)
     free(pin.z);  free(pout.z);  free(v.z);  free(f.z);
     free(pin.w);  free(pout.w);
 
-    if (debug) {
-        double time = cp_Wtime() - ini;
-        printf("Total elapsed time: %lf sec\n", time);
-    }
+    time = cp_Wtime() - ini;
+    printf("Total elapsed time: %lf sec\n", time);
 
     return 0;
 }
