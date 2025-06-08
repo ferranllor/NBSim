@@ -6,3 +6,4 @@
 .vscode/settings.json
 NBSim/.vscode/settings.json
 NBSim/exec
+NBSim/GPU/exec
