@@ -7,7 +7,7 @@ To keep track of what is done and what is to be implemented here is a TODO list:
     - [x] OpenMP
     - [ ] OpenMPI  
     - [x] OpenACC  
-    - [ ] CUDA  
+    - [x] CUDA  
   
 # Barnes-Hut:  
     - [x] Vectorised  
